@@ -19,6 +19,7 @@ package org.springframework.boot.buildpack.platform.build;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.PrintStream;
+import java.net.URI;
 
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -29,6 +30,7 @@ import org.springframework.boot.buildpack.platform.docker.DockerApi.ContainerApi
 import org.springframework.boot.buildpack.platform.docker.DockerApi.ImageApi;
 import org.springframework.boot.buildpack.platform.docker.DockerApi.VolumeApi;
 import org.springframework.boot.buildpack.platform.docker.TotalProgressPullListener;
+import org.springframework.boot.buildpack.platform.docker.transport.DockerEngineException;
 import org.springframework.boot.buildpack.platform.docker.type.ContainerReference;
 import org.springframework.boot.buildpack.platform.docker.type.ContainerStatus;
 import org.springframework.boot.buildpack.platform.docker.type.Image;
@@ -44,6 +46,8 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 /**
@@ -72,23 +76,159 @@ class BuilderTests {
 		DockerApi docker = mockDockerApi();
 		Image builderImage = loadImage("image.json");
 		Image runImage = loadImage("run-image.json");
-		given(docker.image().pull(eq(ImageReference.of("docker.io/cloudfoundry/cnb:0.0.53-bionic")), any()))
+		given(docker.image().pull(eq(ImageReference.of(BuildRequest.DEFAULT_BUILDER_IMAGE_NAME)), any()))
 				.willAnswer(withPulledImage(builderImage));
-		given(docker.image().pull(eq(ImageReference.of("docker.io/cloudfoundry/run:full-cnb")), any()))
+		given(docker.image().pull(eq(ImageReference.of("docker.io/cloudfoundry/run:base-cnb")), any()))
 				.willAnswer(withPulledImage(runImage));
 		Builder builder = new Builder(BuildLog.to(out), docker);
 		BuildRequest request = getTestRequest();
 		builder.build(request);
-		assertThat(out.toString()).contains("Running detector");
-		assertThat(out.toString()).contains("Running restorer");
-		assertThat(out.toString()).contains("Running analyzer");
-		assertThat(out.toString()).contains("Running builder");
-		assertThat(out.toString()).contains("Running exporter");
-		assertThat(out.toString()).contains("Running cacher");
+		assertThat(out.toString()).contains("Running creator");
 		assertThat(out.toString()).contains("Successfully built image 'docker.io/library/my-application:latest'");
 		ArgumentCaptor<ImageArchive> archive = ArgumentCaptor.forClass(ImageArchive.class);
 		verify(docker.image()).load(archive.capture(), any());
 		verify(docker.image()).remove(archive.getValue().getTag(), true);
+	}
+
+	@Test
+	void buildInvokesBuilderWithDefaultImageTags() throws Exception {
+		TestPrintStream out = new TestPrintStream();
+		DockerApi docker = mockDockerApi();
+		Image builderImage = loadImage("image-with-no-run-image-tag.json");
+		Image runImage = loadImage("run-image.json");
+		given(docker.image().pull(eq(ImageReference.of("gcr.io/paketo-buildpacks/builder:latest")), any()))
+				.willAnswer(withPulledImage(builderImage));
+		given(docker.image().pull(eq(ImageReference.of("docker.io/cloudfoundry/run:latest")), any()))
+				.willAnswer(withPulledImage(runImage));
+		Builder builder = new Builder(BuildLog.to(out), docker);
+		BuildRequest request = getTestRequest().withBuilder(ImageReference.of("gcr.io/paketo-buildpacks/builder"));
+		builder.build(request);
+		assertThat(out.toString()).contains("Running creator");
+		assertThat(out.toString()).contains("Successfully built image 'docker.io/library/my-application:latest'");
+		ArgumentCaptor<ImageArchive> archive = ArgumentCaptor.forClass(ImageArchive.class);
+		verify(docker.image()).load(archive.capture(), any());
+		verify(docker.image()).remove(archive.getValue().getTag(), true);
+	}
+
+	@Test
+	void buildInvokesBuilderWithRunImageInDigestForm() throws Exception {
+		TestPrintStream out = new TestPrintStream();
+		DockerApi docker = mockDockerApi();
+		Image builderImage = loadImage("image-with-run-image-digest.json");
+		Image runImage = loadImage("run-image.json");
+		given(docker.image().pull(eq(ImageReference.of(BuildRequest.DEFAULT_BUILDER_IMAGE_NAME)), any()))
+				.willAnswer(withPulledImage(builderImage));
+		given(docker.image().pull(eq(ImageReference.of(
+				"docker.io/cloudfoundry/run@sha256:6e9f67fa63b0323e9a1e587fd71c561ba48a034504fb804fd26fd8800039835d")),
+				any())).willAnswer(withPulledImage(runImage));
+		Builder builder = new Builder(BuildLog.to(out), docker);
+		BuildRequest request = getTestRequest();
+		builder.build(request);
+		assertThat(out.toString()).contains("Running creator");
+		assertThat(out.toString()).contains("Successfully built image 'docker.io/library/my-application:latest'");
+		ArgumentCaptor<ImageArchive> archive = ArgumentCaptor.forClass(ImageArchive.class);
+		verify(docker.image()).load(archive.capture(), any());
+		verify(docker.image()).remove(archive.getValue().getTag(), true);
+	}
+
+	@Test
+	void buildInvokesBuilderWithRunImageFromRequest() throws Exception {
+		TestPrintStream out = new TestPrintStream();
+		DockerApi docker = mockDockerApi();
+		Image builderImage = loadImage("image.json");
+		Image runImage = loadImage("run-image.json");
+		given(docker.image().pull(eq(ImageReference.of(BuildRequest.DEFAULT_BUILDER_IMAGE_NAME)), any()))
+				.willAnswer(withPulledImage(builderImage));
+		given(docker.image().pull(eq(ImageReference.of("example.com/custom/run:latest")), any()))
+				.willAnswer(withPulledImage(runImage));
+		Builder builder = new Builder(BuildLog.to(out), docker);
+		BuildRequest request = getTestRequest().withRunImage(ImageReference.of("example.com/custom/run:latest"));
+		builder.build(request);
+		assertThat(out.toString()).contains("Running creator");
+		assertThat(out.toString()).contains("Successfully built image 'docker.io/library/my-application:latest'");
+		ArgumentCaptor<ImageArchive> archive = ArgumentCaptor.forClass(ImageArchive.class);
+		verify(docker.image()).load(archive.capture(), any());
+		verify(docker.image()).remove(archive.getValue().getTag(), true);
+	}
+
+	@Test
+	void buildInvokesBuilderWithNeverPullPolicy() throws Exception {
+		TestPrintStream out = new TestPrintStream();
+		DockerApi docker = mockDockerApi();
+		Image builderImage = loadImage("image.json");
+		Image runImage = loadImage("run-image.json");
+		given(docker.image().pull(eq(ImageReference.of(BuildRequest.DEFAULT_BUILDER_IMAGE_NAME)), any()))
+				.willAnswer(withPulledImage(builderImage));
+		given(docker.image().pull(eq(ImageReference.of("docker.io/cloudfoundry/run:base-cnb")), any()))
+				.willAnswer(withPulledImage(runImage));
+		given(docker.image().inspect(eq(ImageReference.of(BuildRequest.DEFAULT_BUILDER_IMAGE_NAME))))
+				.willReturn(builderImage);
+		given(docker.image().inspect(eq(ImageReference.of("docker.io/cloudfoundry/run:base-cnb"))))
+				.willReturn(runImage);
+		Builder builder = new Builder(BuildLog.to(out), docker);
+		BuildRequest request = getTestRequest().withPullPolicy(PullPolicy.NEVER);
+		builder.build(request);
+		assertThat(out.toString()).contains("Running creator");
+		assertThat(out.toString()).contains("Successfully built image 'docker.io/library/my-application:latest'");
+		ArgumentCaptor<ImageArchive> archive = ArgumentCaptor.forClass(ImageArchive.class);
+		verify(docker.image()).load(archive.capture(), any());
+		verify(docker.image()).remove(archive.getValue().getTag(), true);
+		verify(docker.image(), never()).pull(any(), any());
+		verify(docker.image(), times(2)).inspect(any());
+	}
+
+	@Test
+	void buildInvokesBuilderWithAlwaysPullPolicy() throws Exception {
+		TestPrintStream out = new TestPrintStream();
+		DockerApi docker = mockDockerApi();
+		Image builderImage = loadImage("image.json");
+		Image runImage = loadImage("run-image.json");
+		given(docker.image().pull(eq(ImageReference.of(BuildRequest.DEFAULT_BUILDER_IMAGE_NAME)), any()))
+				.willAnswer(withPulledImage(builderImage));
+		given(docker.image().pull(eq(ImageReference.of("docker.io/cloudfoundry/run:base-cnb")), any()))
+				.willAnswer(withPulledImage(runImage));
+		given(docker.image().inspect(eq(ImageReference.of(BuildRequest.DEFAULT_BUILDER_IMAGE_NAME))))
+				.willReturn(builderImage);
+		given(docker.image().inspect(eq(ImageReference.of("docker.io/cloudfoundry/run:base-cnb"))))
+				.willReturn(runImage);
+		Builder builder = new Builder(BuildLog.to(out), docker);
+		BuildRequest request = getTestRequest().withPullPolicy(PullPolicy.ALWAYS);
+		builder.build(request);
+		assertThat(out.toString()).contains("Running creator");
+		assertThat(out.toString()).contains("Successfully built image 'docker.io/library/my-application:latest'");
+		ArgumentCaptor<ImageArchive> archive = ArgumentCaptor.forClass(ImageArchive.class);
+		verify(docker.image()).load(archive.capture(), any());
+		verify(docker.image()).remove(archive.getValue().getTag(), true);
+		verify(docker.image(), times(2)).pull(any(), any());
+		verify(docker.image(), never()).inspect(any());
+	}
+
+	@Test
+	void buildInvokesBuilderWithIfNotPresentPullPolicy() throws Exception {
+		TestPrintStream out = new TestPrintStream();
+		DockerApi docker = mockDockerApi();
+		Image builderImage = loadImage("image.json");
+		Image runImage = loadImage("run-image.json");
+		given(docker.image().pull(eq(ImageReference.of(BuildRequest.DEFAULT_BUILDER_IMAGE_NAME)), any()))
+				.willAnswer(withPulledImage(builderImage));
+		given(docker.image().pull(eq(ImageReference.of("docker.io/cloudfoundry/run:base-cnb")), any()))
+				.willAnswer(withPulledImage(runImage));
+		given(docker.image().inspect(eq(ImageReference.of(BuildRequest.DEFAULT_BUILDER_IMAGE_NAME)))).willThrow(
+				new DockerEngineException("docker://localhost/", new URI("example"), 404, "NOT FOUND", null, null))
+				.willReturn(builderImage);
+		given(docker.image().inspect(eq(ImageReference.of("docker.io/cloudfoundry/run:base-cnb")))).willThrow(
+				new DockerEngineException("docker://localhost/", new URI("example"), 404, "NOT FOUND", null, null))
+				.willReturn(runImage);
+		Builder builder = new Builder(BuildLog.to(out), docker);
+		BuildRequest request = getTestRequest().withPullPolicy(PullPolicy.IF_NOT_PRESENT);
+		builder.build(request);
+		assertThat(out.toString()).contains("Running creator");
+		assertThat(out.toString()).contains("Successfully built image 'docker.io/library/my-application:latest'");
+		ArgumentCaptor<ImageArchive> archive = ArgumentCaptor.forClass(ImageArchive.class);
+		verify(docker.image()).load(archive.capture(), any());
+		verify(docker.image()).remove(archive.getValue().getTag(), true);
+		verify(docker.image(), times(2)).inspect(any());
+		verify(docker.image(), times(2)).pull(any(), any());
 	}
 
 	@Test
@@ -97,14 +237,14 @@ class BuilderTests {
 		DockerApi docker = mockDockerApi();
 		Image builderImage = loadImage("image.json");
 		Image runImage = loadImage("run-image-with-bad-stack.json");
-		given(docker.image().pull(eq(ImageReference.of("docker.io/cloudfoundry/cnb:0.0.53-bionic")), any()))
+		given(docker.image().pull(eq(ImageReference.of(BuildRequest.DEFAULT_BUILDER_IMAGE_NAME)), any()))
 				.willAnswer(withPulledImage(builderImage));
-		given(docker.image().pull(eq(ImageReference.of("docker.io/cloudfoundry/run:full-cnb")), any()))
+		given(docker.image().pull(eq(ImageReference.of("docker.io/cloudfoundry/run:base-cnb")), any()))
 				.willAnswer(withPulledImage(runImage));
 		Builder builder = new Builder(BuildLog.to(out), docker);
 		BuildRequest request = getTestRequest();
 		assertThatIllegalStateException().isThrownBy(() -> builder.build(request)).withMessage(
-				"Run image stack 'org.cloudfoundry.stacks.cfwindowsfs3' does not match builder stack 'org.cloudfoundry.stacks.cflinuxfs3'");
+				"Run image stack 'org.cloudfoundry.stacks.cfwindowsfs3' does not match builder stack 'io.buildpacks.stacks.bionic'");
 	}
 
 	@Test
@@ -113,14 +253,14 @@ class BuilderTests {
 		DockerApi docker = mockDockerApiLifecycleError();
 		Image builderImage = loadImage("image.json");
 		Image runImage = loadImage("run-image.json");
-		given(docker.image().pull(eq(ImageReference.of("docker.io/cloudfoundry/cnb:0.0.53-bionic")), any()))
+		given(docker.image().pull(eq(ImageReference.of(BuildRequest.DEFAULT_BUILDER_IMAGE_NAME)), any()))
 				.willAnswer(withPulledImage(builderImage));
-		given(docker.image().pull(eq(ImageReference.of("docker.io/cloudfoundry/run:full-cnb")), any()))
+		given(docker.image().pull(eq(ImageReference.of("docker.io/cloudfoundry/run:base-cnb")), any()))
 				.willAnswer(withPulledImage(runImage));
 		Builder builder = new Builder(BuildLog.to(out), docker);
 		BuildRequest request = getTestRequest();
 		assertThatExceptionOfType(BuilderException.class).isThrownBy(() -> builder.build(request))
-				.withMessage("Builder lifecycle 'detector' failed with status code 9");
+				.withMessage("Builder lifecycle 'creator' failed with status code 9");
 	}
 
 	private DockerApi mockDockerApi() throws IOException {
@@ -160,8 +300,7 @@ class BuilderTests {
 	private BuildRequest getTestRequest() {
 		TarArchive content = mock(TarArchive.class);
 		ImageReference name = ImageReference.of("my-application");
-		BuildRequest request = BuildRequest.of(name, (owner) -> content);
-		return request;
+		return BuildRequest.of(name, (owner) -> content);
 	}
 
 	private Image loadImage(String name) throws IOException {

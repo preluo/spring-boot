@@ -17,6 +17,7 @@
 package org.springframework.boot.buildpack.platform.build;
 
 import java.io.IOException;
+import java.util.Collections;
 
 import org.junit.jupiter.api.Test;
 
@@ -33,6 +34,8 @@ import static org.mockito.Mockito.mock;
  * Tests for {@link BuilderMetadata}.
  *
  * @author Phillip Webb
+ * @author Scott Frederick
+ * @author Andy Wilkinson
  */
 class BuilderMetadataTests extends AbstractJsonTests {
 
@@ -40,14 +43,14 @@ class BuilderMetadataTests extends AbstractJsonTests {
 	void fromImageLoadsMetadata() throws IOException {
 		Image image = Image.of(getContent("image.json"));
 		BuilderMetadata metadata = BuilderMetadata.fromImage(image);
-		assertThat(metadata.getStack().getRunImage().getImage()).isEqualTo("cloudfoundry/run:full-cnb");
+		assertThat(metadata.getStack().getRunImage().getImage()).isEqualTo("cloudfoundry/run:base-cnb");
 		assertThat(metadata.getStack().getRunImage().getMirrors()).isEmpty();
-		assertThat(metadata.getLifecycle().getVersion()).isEqualTo("0.5.0");
+		assertThat(metadata.getLifecycle().getVersion()).isEqualTo("0.7.2");
 		assertThat(metadata.getLifecycle().getApi().getBuildpack()).isEqualTo("0.2");
-		assertThat(metadata.getLifecycle().getApi().getPlatform()).isEqualTo("0.1");
+		assertThat(metadata.getLifecycle().getApi().getPlatform()).isEqualTo("0.3");
 		assertThat(metadata.getCreatedBy().getName()).isEqualTo("Pack CLI");
 		assertThat(metadata.getCreatedBy().getVersion())
-				.isEqualTo("v0.5.0 (git sha: c9cfac75b49609524e1ea33f809c12071406547c)");
+				.isEqualTo("v0.9.0 (git sha: d42c384a39f367588f2653f2a99702db910e5ad7)");
 	}
 
 	@Test
@@ -68,8 +71,9 @@ class BuilderMetadataTests extends AbstractJsonTests {
 		Image image = mock(Image.class);
 		ImageConfig imageConfig = mock(ImageConfig.class);
 		given(image.getConfig()).willReturn(imageConfig);
+		given(imageConfig.getLabels()).willReturn(Collections.singletonMap("alpha", "a"));
 		assertThatIllegalArgumentException().isThrownBy(() -> BuilderMetadata.fromImage(image))
-				.withMessage("No 'io.buildpacks.builder.metadata' label found in image config");
+				.withMessage("No 'io.buildpacks.builder.metadata' label found in image config labels 'alpha'");
 	}
 
 	@Test

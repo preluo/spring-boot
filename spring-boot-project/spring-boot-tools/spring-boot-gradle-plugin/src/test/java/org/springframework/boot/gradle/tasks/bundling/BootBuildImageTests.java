@@ -20,12 +20,14 @@ import java.io.File;
 import java.util.HashMap;
 import java.util.Map;
 
+import org.gradle.api.JavaVersion;
 import org.gradle.api.Project;
 import org.gradle.testfixtures.ProjectBuilder;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import org.springframework.boot.buildpack.platform.build.BuildRequest;
+import org.springframework.boot.buildpack.platform.build.PullPolicy;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -34,6 +36,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  *
  * @author Andy Wilkinson
  * @author Scott Frederick
+ * @author Andrey Shlykov
  */
 class BootBuildImageTests {
 
@@ -129,6 +132,27 @@ class BootBuildImageTests {
 	}
 
 	@Test
+	void whenJavaVersionIsSetInEnvironmentItIsIncludedInTheRequest() {
+		this.buildImage.environment("BP_JVM_VERSION", "from-env");
+		this.buildImage.getTargetJavaVersion().set(JavaVersion.VERSION_1_8);
+		assertThat(this.buildImage.createRequest().getEnv()).containsEntry("BP_JVM_VERSION", "from-env").hasSize(1);
+	}
+
+	@Test
+	void whenTargetCompatibilityIsSetThenJavaVersionIsIncludedInTheRequest() {
+		this.buildImage.getTargetJavaVersion().set(JavaVersion.VERSION_1_8);
+		assertThat(this.buildImage.createRequest().getEnv()).containsEntry("BP_JVM_VERSION", "8.*").hasSize(1);
+	}
+
+	@Test
+	void whenTargetCompatibilityIsSetThenJavaVersionIsAddedToEnvironment() {
+		this.buildImage.environment("ALPHA", "a");
+		this.buildImage.getTargetJavaVersion().set(JavaVersion.VERSION_11);
+		assertThat(this.buildImage.createRequest().getEnv()).containsEntry("ALPHA", "a")
+				.containsEntry("BP_JVM_VERSION", "11.*").hasSize(2);
+	}
+
+	@Test
 	void whenUsingDefaultConfigurationThenRequestHasVerboseLoggingDisabled() {
 		assertThat(this.buildImage.createRequest().isVerboseLogging()).isFalse();
 	}
@@ -152,13 +176,35 @@ class BootBuildImageTests {
 
 	@Test
 	void whenNoBuilderIsConfiguredThenRequestHasDefaultBuilder() {
-		assertThat(this.buildImage.createRequest().getBuilder().getName()).isEqualTo("cloudfoundry/cnb");
+		assertThat(this.buildImage.createRequest().getBuilder().getName()).isEqualTo("paketo-buildpacks/builder");
 	}
 
 	@Test
 	void whenBuilderIsConfiguredThenRequestUsesSpecifiedBuilder() {
 		this.buildImage.setBuilder("example.com/test/builder:1.2");
 		assertThat(this.buildImage.createRequest().getBuilder().getName()).isEqualTo("test/builder");
+	}
+
+	@Test
+	void whenNoRunImageIsConfiguredThenRequestUsesDefaultRunImage() {
+		assertThat(this.buildImage.createRequest().getRunImage()).isNull();
+	}
+
+	@Test
+	void whenRunImageIsConfiguredThenRequestUsesSpecifiedRunImage() {
+		this.buildImage.setRunImage("example.com/test/run:1.0");
+		assertThat(this.buildImage.createRequest().getRunImage().getName()).isEqualTo("test/run");
+	}
+
+	@Test
+	void whenUsingDefaultConfigurationThenRequestHasAlwaysPullPolicy() {
+		assertThat(this.buildImage.createRequest().getPullPolicy()).isEqualTo(PullPolicy.ALWAYS);
+	}
+
+	@Test
+	void whenPullPolicyIsConfiguredThenRequestHasPullPolicy() {
+		this.buildImage.setPullPolicy(PullPolicy.NEVER);
+		assertThat(this.buildImage.createRequest().getPullPolicy()).isEqualTo(PullPolicy.NEVER);
 	}
 
 }

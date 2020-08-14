@@ -22,6 +22,7 @@ import java.util.function.Function;
 import org.apache.maven.artifact.Artifact;
 
 import org.springframework.boot.buildpack.platform.build.BuildRequest;
+import org.springframework.boot.buildpack.platform.build.PullPolicy;
 import org.springframework.boot.buildpack.platform.docker.type.ImageName;
 import org.springframework.boot.buildpack.platform.docker.type.ImageReference;
 import org.springframework.boot.buildpack.platform.io.Owner;
@@ -32,6 +33,7 @@ import org.springframework.util.StringUtils;
  * Image configuration options.
  *
  * @author Phillip Webb
+ * @author Scott Frederick
  * @since 2.3.0
  */
 public class Image {
@@ -47,6 +49,11 @@ public class Image {
 	String builder;
 
 	/**
+	 * The run image used to launch the built image.
+	 */
+	String runImage;
+
+	/**
 	 * Environment properties that should be passed to the builder.
 	 */
 	Map<String, String> env;
@@ -60,6 +67,27 @@ public class Image {
 	 * If verbose logging is required.
 	 */
 	boolean verboseLogging;
+
+	/**
+	 * If images should be pulled from a remote repository during image build.
+	 */
+	PullPolicy pullPolicy;
+
+	void setName(String name) {
+		this.name = name;
+	}
+
+	void setBuilder(String builder) {
+		this.builder = builder;
+	}
+
+	void setRunImage(String runImage) {
+		this.runImage = runImage;
+	}
+
+	public void setPullPolicy(PullPolicy pullPolicy) {
+		this.pullPolicy = pullPolicy;
+	}
 
 	BuildRequest getBuildRequest(Artifact artifact, Function<Owner, TarArchive> applicationContent) {
 		return customize(BuildRequest.of(getOrDeduceName(artifact), applicationContent));
@@ -77,11 +105,17 @@ public class Image {
 		if (StringUtils.hasText(this.builder)) {
 			request = request.withBuilder(ImageReference.of(this.builder));
 		}
+		if (StringUtils.hasText(this.runImage)) {
+			request = request.withRunImage(ImageReference.of(this.runImage));
+		}
 		if (this.env != null && !this.env.isEmpty()) {
 			request = request.withEnv(this.env);
 		}
 		request = request.withCleanCache(this.cleanCache);
 		request = request.withVerboseLogging(this.verboseLogging);
+		if (this.pullPolicy != null) {
+			request = request.withPullPolicy(this.pullPolicy);
+		}
 		return request;
 	}
 

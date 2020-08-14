@@ -125,7 +125,7 @@ public class FlywayAutoConfiguration {
 				ObjectProvider<JavaMigration> javaMigrations, ObjectProvider<Callback> callbacks) {
 			FluentConfiguration configuration = new FluentConfiguration(resourceLoader.getClassLoader());
 			DataSource dataSourceToMigrate = configureDataSource(configuration, properties, dataSourceProperties,
-					flywayDataSource.getIfAvailable(), dataSource.getIfAvailable());
+					flywayDataSource.getIfAvailable(), dataSource.getIfUnique());
 			checkLocationExists(dataSourceToMigrate, properties, resourceLoader);
 			configureProperties(configuration, properties);
 			List<Callback> orderedCallbacks = callbacks.orderedStream().collect(Collectors.toList());
@@ -178,6 +178,7 @@ public class FlywayAutoConfiguration {
 			// No method reference for compatibility with Flyway 5.x
 			map.from(properties.getDefaultSchema()).to((schema) -> configuration.defaultSchema(schema));
 			map.from(properties.getSchemas()).as(StringUtils::toStringArray).to(configuration::schemas);
+			configureCreateSchemas(configuration, properties.isCreateSchemas());
 			map.from(properties.getTable()).to(configuration::table);
 			// No method reference for compatibility with Flyway 5.x
 			map.from(properties.getTablespace()).whenNonNull().to((tablespace) -> configuration.tablespace(tablespace));
@@ -219,6 +220,15 @@ public class FlywayAutoConfiguration {
 					.to((oracleSqlplusWarn) -> configuration.oracleSqlplusWarn(oracleSqlplusWarn));
 			map.from(properties.getStream()).whenNonNull().to(configuration::stream);
 			map.from(properties.getUndoSqlMigrationPrefix()).whenNonNull().to(configuration::undoSqlMigrationPrefix);
+		}
+
+		private void configureCreateSchemas(FluentConfiguration configuration, boolean createSchemas) {
+			try {
+				configuration.createSchemas(createSchemas);
+			}
+			catch (NoSuchMethodError ex) {
+				// Flyway < 6.5
+			}
 		}
 
 		private void configureValidateMigrationNaming(FluentConfiguration configuration,

@@ -22,11 +22,9 @@ import java.util.Arrays;
 import java.util.concurrent.Callable;
 
 import io.netty.buffer.PooledByteBufAllocator;
-import io.rsocket.AbstractRSocket;
 import io.rsocket.ConnectionSetupPayload;
 import io.rsocket.Payload;
 import io.rsocket.RSocket;
-import io.rsocket.RSocketFactory;
 import io.rsocket.SocketAcceptor;
 import io.rsocket.transport.netty.client.WebsocketClientTransport;
 import io.rsocket.util.DefaultPayload;
@@ -37,7 +35,7 @@ import org.mockito.InOrder;
 import reactor.core.publisher.Mono;
 
 import org.springframework.boot.rsocket.server.RSocketServer;
-import org.springframework.boot.rsocket.server.ServerRSocketFactoryProcessor;
+import org.springframework.boot.rsocket.server.RSocketServerCustomizer;
 import org.springframework.core.codec.CharSequenceEncoder;
 import org.springframework.core.codec.StringDecoder;
 import org.springframework.core.io.buffer.NettyDataBufferFactory;
@@ -48,7 +46,7 @@ import org.springframework.util.SocketUtils;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.BDDMockito.given;
+import static org.mockito.BDDMockito.will;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 
@@ -77,7 +75,7 @@ class NettyRSocketServerFactoryTests {
 			}
 		}
 		if (this.requester != null) {
-			this.requester.rsocket().dispose();
+			this.requester.rsocketClient().dispose();
 		}
 	}
 
@@ -130,32 +128,32 @@ class NettyRSocketServerFactoryTests {
 	}
 
 	@Test
-	void serverProcessors() {
+	void serverCustomizers() {
 		NettyRSocketServerFactory factory = getFactory();
-		ServerRSocketFactoryProcessor[] processors = new ServerRSocketFactoryProcessor[2];
-		for (int i = 0; i < processors.length; i++) {
-			processors[i] = mock(ServerRSocketFactoryProcessor.class);
-			given(processors[i].process(any(RSocketFactory.ServerRSocketFactory.class)))
-					.will((invocation) -> invocation.getArgument(0));
+		RSocketServerCustomizer[] customizers = new RSocketServerCustomizer[2];
+		for (int i = 0; i < customizers.length; i++) {
+			customizers[i] = mock(RSocketServerCustomizer.class);
+			will((invocation) -> invocation.getArgument(0)).given(customizers[i])
+					.customize(any(io.rsocket.core.RSocketServer.class));
 		}
-		factory.setSocketFactoryProcessors(Arrays.asList(processors));
+		factory.setRSocketServerCustomizers(Arrays.asList(customizers));
 		this.server = factory.create(new EchoRequestResponseAcceptor());
-		InOrder ordered = inOrder((Object[]) processors);
-		for (ServerRSocketFactoryProcessor processor : processors) {
-			ordered.verify(processor).process(any(RSocketFactory.ServerRSocketFactory.class));
+		InOrder ordered = inOrder((Object[]) customizers);
+		for (RSocketServerCustomizer customizer : customizers) {
+			ordered.verify(customizer).customize(any(io.rsocket.core.RSocketServer.class));
 		}
 	}
 
 	private RSocketRequester createRSocketTcpClient() {
 		Assertions.assertThat(this.server).isNotNull();
 		InetSocketAddress address = this.server.address();
-		return createRSocketRequesterBuilder().connectTcp(address.getHostString(), address.getPort()).block();
+		return createRSocketRequesterBuilder().tcp(address.getHostString(), address.getPort());
 	}
 
 	private RSocketRequester createRSocketWebSocketClient() {
 		Assertions.assertThat(this.server).isNotNull();
 		InetSocketAddress address = this.server.address();
-		return createRSocketRequesterBuilder().connect(WebsocketClientTransport.create(address)).block();
+		return createRSocketRequesterBuilder().transport(WebsocketClientTransport.create(address));
 	}
 
 	private RSocketRequester.Builder createRSocketRequesterBuilder() {
@@ -182,7 +180,7 @@ class NettyRSocketServerFactoryTests {
 
 		@Override
 		public Mono<RSocket> accept(ConnectionSetupPayload setupPayload, RSocket rSocket) {
-			return Mono.just(new AbstractRSocket() {
+			return Mono.just(new RSocket() {
 				@Override
 				public Mono<Payload> requestResponse(Payload payload) {
 					return Mono.just(DefaultPayload.create(payload));

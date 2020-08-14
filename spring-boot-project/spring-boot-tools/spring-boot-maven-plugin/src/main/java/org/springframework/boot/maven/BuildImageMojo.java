@@ -42,6 +42,7 @@ import org.springframework.boot.buildpack.platform.build.BuildLog;
 import org.springframework.boot.buildpack.platform.build.BuildRequest;
 import org.springframework.boot.buildpack.platform.build.Builder;
 import org.springframework.boot.buildpack.platform.build.Creator;
+import org.springframework.boot.buildpack.platform.build.PullPolicy;
 import org.springframework.boot.buildpack.platform.docker.TotalProgressEvent;
 import org.springframework.boot.buildpack.platform.io.Owner;
 import org.springframework.boot.buildpack.platform.io.TarArchive;
@@ -62,6 +63,8 @@ import org.springframework.util.StringUtils;
 		requiresDependencyCollection = ResolutionScope.COMPILE_PLUS_RUNTIME)
 @Execute(phase = LifecyclePhase.PACKAGE)
 public class BuildImageMojo extends AbstractPackagerMojo {
+
+	private static final String BUILDPACK_JVM_VERSION_KEY = "BP_JVM_VERSION";
 
 	/**
 	 * Directory containing the JAR.
@@ -92,12 +95,41 @@ public class BuildImageMojo extends AbstractPackagerMojo {
 	private String classifier;
 
 	/**
-	 * Image configuration, with `builder`, `name`, `env`, `cleanCache` and
+	 * Image configuration, with `builder`, `runImage`, `name`, `env`, `cleanCache` and
 	 * `verboseLogging` options.
 	 * @since 2.3.0
 	 */
 	@Parameter
 	private Image image;
+
+	/**
+	 * Alias for {@link Image#name} to support configuration via command-line property.
+	 * @since 2.3.0
+	 */
+	@Parameter(property = "spring-boot.build-image.imageName", readonly = true)
+	String imageName;
+
+	/**
+	 * Alias for {@link Image#builder} to support configuration via command-line property.
+	 * @since 2.3.0
+	 */
+	@Parameter(property = "spring-boot.build-image.builder", readonly = true)
+	String imageBuilder;
+
+	/**
+	 * Alias for {@link Image#runImage} to support configuration via command-line
+	 * property.
+	 * @since 2.3.1
+	 */
+	@Parameter(property = "spring-boot.build-image.runImage", readonly = true)
+	String runImage;
+
+	/**
+	 * Alias for {@link Image#pullPolicy} to support configuration via command-line
+	 * property.
+	 */
+	@Parameter(property = "spring-boot.build-image.pullPolicy", readonly = true)
+	PullPolicy pullPolicy;
 
 	@Override
 	public void execute() throws MojoExecutionException {
@@ -127,6 +159,18 @@ public class BuildImageMojo extends AbstractPackagerMojo {
 	private BuildRequest getBuildRequest(Libraries libraries) {
 		Function<Owner, TarArchive> content = (owner) -> getApplicationContent(owner, libraries);
 		Image image = (this.image != null) ? this.image : new Image();
+		if (image.name == null && this.imageName != null) {
+			image.setName(this.imageName);
+		}
+		if (image.builder == null && this.imageBuilder != null) {
+			image.setBuilder(this.imageBuilder);
+		}
+		if (image.runImage == null && this.runImage != null) {
+			image.setRunImage(this.runImage);
+		}
+		if (image.pullPolicy == null && this.pullPolicy != null) {
+			image.setPullPolicy(this.pullPolicy);
+		}
 		return customize(image.getBuildRequest(this.project.getArtifact(), content));
 	}
 
@@ -137,7 +181,7 @@ public class BuildImageMojo extends AbstractPackagerMojo {
 
 	private File getJarFile() {
 		// We can use 'project.getArtifact().getFile()' because that was done in a
-		// forked lifecyle and is now null
+		// forked lifecycle and is now null
 		StringBuilder name = new StringBuilder(this.finalName);
 		if (StringUtils.hasText(this.classifier)) {
 			name.append("-").append(this.classifier);
@@ -147,6 +191,23 @@ public class BuildImageMojo extends AbstractPackagerMojo {
 	}
 
 	private BuildRequest customize(BuildRequest request) {
+		request = customizeEnvironment(request);
+		request = customizeCreator(request);
+		return request;
+	}
+
+	private BuildRequest customizeEnvironment(BuildRequest request) {
+		if (!request.getEnv().containsKey(BUILDPACK_JVM_VERSION_KEY)) {
+			JavaCompilerPluginConfiguration compilerConfiguration = new JavaCompilerPluginConfiguration(this.project);
+			String targetJavaVersion = compilerConfiguration.getTargetMajorVersion();
+			if (StringUtils.hasText(targetJavaVersion)) {
+				return request.withEnv(BUILDPACK_JVM_VERSION_KEY, targetJavaVersion + ".*");
+			}
+		}
+		return request;
+	}
+
+	private BuildRequest customizeCreator(BuildRequest request) {
 		String springBootVersion = VersionExtractor.forClass(BuildImageMojo.class);
 		if (StringUtils.hasText(springBootVersion)) {
 			request = request.withCreator(Creator.withVersion(springBootVersion));
